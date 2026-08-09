@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Rates &amp; Barrels — Mentions vs. Career fWAR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0e1a22;
+    --panel: #15242f;
+    --panel-2: #1b2f3c;
+    --grid: #24404e;
+    --chalk: #eaf2f1;
+    --muted: #8ba6b2;
+    --amber: #e8a33d;      /* talked-about, unproven */
+    --teal: #3fb7a6;       /* established production */
+    --neutral: #6f8a97;    /* everyone else */
+    --dirt: #c8703c;
+    --line: #40606f;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--chalk); }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    padding: clamp(16px, 3vw, 34px);
+    max-width: 1180px;
+    margin: 0 auto;
+  }
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--amber);
+    margin: 0 0 10px;
+  }
+  h1 {
+    font-family: 'Oswald', sans-serif;
+    font-weight: 600;
+    font-size: clamp(28px, 5vw, 46px);
+    line-height: 1.02;
+    letter-spacing: 0.005em;
+    margin: 0 0 12px;
+    text-transform: uppercase;
+  }
+  h1 .thin { color: var(--muted); font-weight: 400; }
+  .sub {
+    color: var(--muted);
+    font-size: 15px;
+    max-width: 68ch;
+    line-height: 1.5;
+    margin: 0 0 6px;
+  }
+  .sample-note {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11.5px;
+    color: var(--dirt);
+    letter-spacing: 0.02em;
+    margin: 10px 0 0;
+  }
+  .board {
+    position: relative;
+    margin-top: 22px;
+    background:
+      linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--grid);
+    border-radius: 14px;
+    padding: 8px 8px 4px;
+    box-shadow: 0 24px 60px -30px #000;
+  }
+  svg { display: block; width: 100%; height: auto; font-family: 'IBM Plex Mono', monospace; }
+  .axis-label { fill: var(--muted); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; }
+  .tick { fill: var(--muted); font-size: 11px; }
+  .gridline { stroke: var(--grid); stroke-width: 1; }
+  .gridline.zero { stroke: var(--line); stroke-width: 1.4; }
+  .fitline { stroke: var(--line); stroke-width: 1.6; stroke-dasharray: 6 5; opacity: 0.8; }
+  .zone { fill: var(--amber); opacity: 0.07; }
+  .zone-label {
+    fill: var(--amber); opacity: 0.85;
+    font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 500;
+  }
+  .dot { cursor: pointer; transition: opacity .12s ease, stroke-width .12s ease; }
+  .dot:hover { stroke-width: 2.4px; }
+  .dot-label { fill: var(--chalk); font-size: 11px; pointer-events: none; opacity: 0.9; }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px 22px; margin: 16px 4px 4px; }
+  .legend span { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .swatch { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+  .size-key { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--muted); }
+
+  .flags {
+    margin-top: 26px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 10px;
+  }
+  .flag {
+    background: var(--panel);
+    border: 1px solid var(--grid);
+    border-left: 3px solid var(--amber);
+    border-radius: 8px;
+    padding: 11px 13px;
+  }
+  .flag .name { font-family: 'Oswald', sans-serif; font-size: 17px; text-transform: uppercase; letter-spacing: .01em; }
+  .flag .stat { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .flag .stat b { color: var(--amber); font-weight: 500; }
+  .flags-head { font-family:'Oswald',sans-serif; text-transform:uppercase; font-size:19px; letter-spacing:.03em; margin:30px 4px 4px; }
+  .flags-head small { display:block; font-family:'Inter',sans-serif; text-transform:none; letter-spacing:normal; font-size:13px; color:var(--muted); font-weight:400; margin-top:4px; }
+
+  /* tooltip */
+  #tip {
+    position: fixed; pointer-events: none; z-index: 20;
+    background: #0a141b; border: 1px solid var(--line); border-radius: 8px;
+    padding: 9px 11px; font-size: 12.5px; color: var(--chalk);
+    box-shadow: 0 10px 30px -10px #000; opacity: 0; transition: opacity .1s; max-width: 220px;
+  }
+  #tip .t-name { font-family:'Oswald',sans-serif; font-size:15px; text-transform:uppercase; letter-spacing:.02em; margin-bottom:4px; }
+  #tip .t-row { font-family:'IBM Plex Mono',monospace; color: var(--muted); }
+  #tip .t-row b { color: var(--chalk); font-weight:500; }
+  #tip .t-tag { font-family:'IBM Plex Mono',monospace; font-size:11px; margin-top:5px; letter-spacing:.03em; }
+  footer { color: var(--muted); font-size: 12px; margin-top: 30px; line-height: 1.6; }
+  a { color: var(--teal); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+  <p class="eyebrow">Rates &amp; Barrels · sample of 3 episodes</p>
+  <h1>Who gets the airtime <span class="thin">vs.</span><br />who earned the WAR</h1>
+  <p class="sub">Every dot is a player named on the podcast. Vertical position and bubble size both scale with how often they came up; horizontal position is career fWAR. The dashed line is the expected mention rate for a given fWAR — players sitting <em>above</em> it get talked about more than their production alone would predict.</p>
+  <p class="sample-note">// DEMO DATA — hand-tallied mentions from 3 episodes (Feb 2020 draft show, Jul 3 &amp; Jun 16 2025). Career fWAR approximate. The pipeline replaces both with exact automated counts across all ~749 episodes and live FanGraphs WAR.</p>
+
+  <div class="board">
+    <svg id="chart" viewBox="0 0 960 600" role="img" aria-label="Scatter plot of podcast mentions versus career fWAR"></svg>
+  </div>
+
+  <div class="legend">
+    <span><i class="swatch" style="background:var(--amber)"></i>Talked about, little on the résumé (fWAR&nbsp;≤&nbsp;5, 4+ mentions)</span>
+    <span><i class="swatch" style="background:var(--teal)"></i>Established producer</span>
+    <span><i class="swatch" style="background:var(--neutral)"></i>Everyone else</span>
+    <span class="size-key">◯ bubble size = mentions</span>
+  </div>
+
+  <p class="flags-head">The over-discussed corner
+    <small>Highest mentions among players who've produced little — the list your question was after. Ordered by mentions.</small>
+  </p>
+  <div class="flags" id="flags"></div>
+
+  <footer>
+    Built as a proof-of-concept for the full pipeline. One known matcher gotcha visible here: the hosts call <b>Josh Jung</b> "Josh Young" throughout the July episode — fuzzy surname matching won't catch that swap, so a name-alias table is worth maintaining. fWAR shown is illustrative; swap in live values before drawing conclusions.
+  </footer>
+
+  <div id="tip"></div>
+
+<script>
+// ---- SAMPLE DATA (player, mentions across 3 eps, approx career fWAR) ----
+const DATA = [
+  {n:"Rafael Devers", m:20, w:28},
+  {n:"Clayton Kershaw", m:15, w:80},
+  {n:"Kyle Harrison", m:11, w:1.6},
+  {n:"Shohei Ohtani", m:10, w:48},
+  {n:"Hayden Birdsong", m:9, w:0.9},
+  {n:"Josh Jung", m:8, w:6},
+  {n:"Max Muncy (LAD)", m:8, w:24},
+  {n:"Colby Thomas", m:7, w:0.1},
+  {n:"Bryce Eldridge", m:6, w:0.0},
+  {n:"Brady House", m:6, w:0.2},
+  {n:"Keston Hiura", m:6, w:1.2},
+  {n:"Walker Buehler", m:6, w:18},
+  {n:"Spencer Schwellenbach", m:6, w:3},
+  {n:"Jacob Misiorowski", m:5, w:0.6},
+  {n:"Esteury Ruiz", m:5, w:1.0},
+  {n:"Jackson Merrill", m:5, w:5},
+  {n:"Brandon Woodruff", m:5, w:17},
+  {n:"Ben Casparius", m:4, w:0.6},
+  {n:"Kumar Rocker", m:4, w:0.1},
+  {n:"Eury Pérez", m:4, w:1.1},
+  {n:"Cody Clemens", m:4, w:0.2},
+  {n:"Matt Chapman", m:4, w:38},
+  {n:"Willy Adames", m:4, w:25},
+  {n:"Justin Verlander", m:4, w:80},
+  {n:"Jackson Chourio", m:3, w:4},
+  {n:"Aaron Judge", m:3, w:55},
+  {n:"Manny Machado", m:2, w:58},
+  {n:"Mookie Betts", m:2, w:69},
+  {n:"Max Scherzer", m:2, w:73},
+  {n:"Juan Soto", m:2, w:34},
+  {n:"Gerrit Cole", m:2, w:45},
+];
+
+const WAR_CEIL = 5, MENTION_FLOOR = 4;
+function category(d){
+  if (d.w <= WAR_CEIL && d.m >= MENTION_FLOOR) return "amber";
+  if (d.w >= 20) return "teal";
+  return "neutral";
+}
+const COLORS = {amber:"#e8a33d", teal:"#3fb7a6", neutral:"#6f8a97"};
+
+// ---- layout ----
+const W=960, H=600, M={t:40,r:28,b:64,l:64};
+const iw = W-M.l-M.r, ih = H-M.t-M.b;
+const xMax = 85, yMax = 22;
+const x = v => M.l + (v/xMax)*iw;
+const y = v => M.t + ih - (v/yMax)*ih;
+const r = m => 5 + Math.sqrt(m)*4.2;
+
+const svg = document.getElementById("chart");
+const NS = "http://www.w3.org/2000/svg";
+function el(tag, attrs, txt){ const e=document.createElementNS(NS,tag); for(const k in attrs) e.setAttribute(k,attrs[k]); if(txt!=null) e.textContent=txt; svg.appendChild(e); return e; }
+
+// overhyped zone (top-left): fWAR <= WAR_CEIL, mentions >= MENTION_FLOOR
+el("rect",{class:"zone", x:x(0), y:M.t, width:x(WAR_CEIL)-x(0), height:y(MENTION_FLOOR)-M.t});
+el("text",{class:"zone-label", x:x(0)+10, y:M.t+20}, "Over-discussed");
+
+// gridlines + ticks (x)
+for(let v=0; v<=xMax; v+=10){
+  el("line",{class:"gridline"+(v===0?" zero":""), x1:x(v), y1:M.t, x2:x(v), y2:M.t+ih});
+  el("text",{class:"tick","text-anchor":"middle", x:x(v), y:M.t+ih+20}, v);
+}
+// gridlines + ticks (y)
+for(let v=0; v<=yMax; v+=5){
+  el("line",{class:"gridline"+(v===0?" zero":""), x1:M.l, y1:y(v), x2:M.l+iw, y2:y(v)});
+  el("text",{class:"tick","text-anchor":"end", x:M.l-10, y:y(v)+4}, v);
+}
+// axis labels
+el("text",{class:"axis-label","text-anchor":"middle", x:M.l+iw/2, y:H-18}, "Career fWAR  (approx.)");
+el("text",{class:"axis-label","text-anchor":"middle", transform:`rotate(-90 18 ${M.t+ih/2})`, x:18, y:M.t+ih/2}, "Podcast mentions");
+
+// fit line: simple least-squares mentions ~ a + b*fWAR (expectation given production)
+(function(){
+  const xs=DATA.map(d=>d.w), ys=DATA.map(d=>d.m), N=DATA.length;
+  const mx=xs.reduce((a,b)=>a+b)/N, my=ys.reduce((a,b)=>a+b)/N;
+  let num=0, den=0; for(let i=0;i<N;i++){ num+=(xs[i]-mx)*(ys[i]-my); den+=(xs[i]-mx)**2; }
+  const b=num/den, a=my-b*mx;
+  el("line",{class:"fitline", x1:x(0), y1:y(a), x2:x(xMax), y2:y(a+b*xMax)});
+})();
+
+// dots (bigger drawn first so small ones stay clickable on top)
+const tip = document.getElementById("tip");
+[...DATA].sort((p,q)=>q.m-p.m).forEach(d=>{
+  const c = COLORS[category(d)];
+  const cx=x(d.w), cy=y(d.m), rr=r(d.m);
+  const dot = el("circle",{class:"dot", cx, cy, r:rr, fill:c, "fill-opacity":0.62, stroke:c, "stroke-width":1.4});
+  // label the notable ones (mentions >= 4) to keep it readable
+  if(d.m>=4){
+    const anchor = cx > W-160 ? "end" : "start";
+    const dx = anchor==="end" ? -(rr+6) : (rr+6);
+    el("text",{class:"dot-label","text-anchor":anchor, x:cx+dx, y:cy+4}, d.n);
+  }
+  const tag = category(d)==="amber" ? "▲ over-discussed" : category(d)==="teal" ? "established" : "—";
+  dot.addEventListener("mousemove",e=>{
+    tip.style.opacity=1;
+    tip.style.left=Math.min(e.clientX+14, innerWidth-232)+"px";
+    tip.style.top=(e.clientY+14)+"px";
+    tip.innerHTML=`<div class="t-name">${d.n}</div>
+      <div class="t-row">mentions &nbsp;<b>${d.m}</b></div>
+      <div class="t-row">career fWAR &nbsp;<b>${d.w}</b></div>
+      <div class="t-tag" style="color:${c}">${tag}</div>`;
+  });
+  dot.addEventListener("mouseleave",()=>tip.style.opacity=0);
+});
+
+// ---- flag cards for the over-discussed corner ----
+const flags = DATA.filter(d=>category(d)==="amber").sort((a,b)=>b.m-a.m);
+const fw = document.getElementById("flags");
+flags.forEach(d=>{
+  const div=document.createElement("div"); div.className="flag";
+  div.innerHTML=`<div class="name">${d.n}</div>
+    <div class="stat"><b>${d.m}</b> mentions · <b>${d.w}</b> career fWAR</div>`;
+  fw.appendChild(div);
+});
+</script>
+</body>
+</html>
