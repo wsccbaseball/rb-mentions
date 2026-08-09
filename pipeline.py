@@ -60,6 +60,8 @@ EPISODE_DELAY = 1.2     # between transcript fetches — polite enough to avoid 
 # Map the mangled form -> the real player. Grow this as you spot misses.
 ALIASES = {
     "josh young": "Josh Jung",          # hosts say "Young" for "Jung"
+    "keston hura": "Keston Hiura",       # transcription drops the 'i' in Hiura
+    "keston hira": "Keston Hiura",
     "eno saris": None, "van ryper": None, "inosaris": None,  # hosts, not players
     "niv shah": None, "brian smith": None,
 }
@@ -72,6 +74,7 @@ NON_PLAYERS = {
     "buster posey", "farhan zaidi", "bob melvin", "alex anthopoulos",
     "dave roberts", "aj preller", "peter bendix", "mark kotsay",
     "craig breslow",
+    "trevor may",   # retired; 'Trevor' (guest) + 'may' (verb) forms false bigrams
 }
 
 # Surnames that are also common English words, months, or verbs and survive the
