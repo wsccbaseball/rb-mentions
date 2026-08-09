@@ -9,7 +9,11 @@ on:
         required: false
         default: ''
       no_fwar:
-        description: 'Skip the FanGraphs join (faster test run)'
+        description: 'Skip the WAR join (faster test run)'
+        type: boolean
+        default: false
+      fwar_only:
+        description: 'Skip scraping; just recompute WAR for players in Supabase'
         type: boolean
         default: false
 jobs:
@@ -25,9 +29,11 @@ jobs:
           ARGS=""
           if [ -n "${{ inputs.limit }}" ]; then ARGS="$ARGS --limit ${{ inputs.limit }}"; fi
           if [ "${{ inputs.no_fwar }}" = "true" ]; then ARGS="$ARGS --no-fwar"; fi
+          if [ "${{ inputs.fwar_only }}" = "true" ]; then ARGS="$ARGS --fwar-only"; fi
           echo "running: python pipeline.py $ARGS"
           python pipeline.py $ARGS
         env:
+          PYTHONUNBUFFERED: "1"
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       - uses: actions/upload-artifact@v4
