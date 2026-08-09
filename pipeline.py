@@ -84,18 +84,31 @@ AD_MARKERS = ("instacart", "watercolor westport", "rakuten", "logan & cove",
               "logan and cove", "toyota", "audible", "nyt cooking", "megaphone.fm")
 
 def fetch_transcript(url: str) -> str:
-    """Return the transcript body, ad reads and timestamp markers stripped."""
+    """Return the transcript body, ad reads and timestamp markers stripped.
+
+    The transcript is reliably bracketed by 'Starting point is HH:MM:SS' markers,
+    so we slice on those rather than on a 'Transcript' heading — and we drop
+    <script>/<style> first, because podscripts ships a 'There aren't comments yet'
+    string inside an early script that would otherwise truncate the body.
+    """
     r = requests.get(url, headers=HEADERS, timeout=30)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
-    # the transcript lives after a "Transcript" heading; grab the big text block
+    for tag in soup(["script", "style", "noscript", "nav", "header", "footer"]):
+        tag.decompose()
     text = soup.get_text("\n")
-    m = re.search(r"\bTranscript\b(.*?)(?:There aren.t comments yet|©\s*PodScripts)",
-                  text, re.S)
-    body = m.group(1) if m else text
-    # drop "Starting point is HH:MM:SS" scaffolding
+
+    starts = [m.start() for m in
+              re.finditer(r"Starting point is \d{2}:\d{2}:\d{2}", text)]
+    if starts:
+        body = text[starts[0]:]
+        body = re.split(r"There aren.t comments yet|©\s*PodScripts", body)[0]
+    else:  # fallback if the timestamp format ever changes
+        m = re.search(r"\bTranscript\b(.*?)(?:There aren.t comments yet|©\s*PodScripts)",
+                      text, re.S)
+        body = m.group(1) if m else text
+
     body = re.sub(r"Starting point is \d{2}:\d{2}:\d{2}", " ", body)
-    # drop obvious ad lines
     lines = [ln for ln in body.splitlines()
              if not any(a in ln.lower() for a in AD_MARKERS)]
     return " ".join(lines)
@@ -205,12 +218,16 @@ def count_mentions(urls, full_exact, last_index):
             txt = fetch_transcript(url)
         except Exception as e:
             print(f"  ! skip {url}: {e}"); continue
+        if len(txt) < 500:
+            print(f"  ! short transcript ({len(txt)} chars), check parsing: {url}")
         c = match_episode(txt, full_exact, last_index)
         per_ep[url] = c
         total.update(c)
         if j % 10 == 0:
             print(f"  ...{j}/{len(urls)} episodes")
         time.sleep(0.3)
+    print(f"  {len(total)} distinct players; top 10: "
+          + ", ".join(f"{n}({m})" for n, m in total.most_common(10)))
     return total, per_ep
 
 
