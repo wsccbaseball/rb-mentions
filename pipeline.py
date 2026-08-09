@@ -23,6 +23,7 @@ Run:      python pipeline.py            # full run
 from __future__ import annotations
 import argparse, csv, os, re, time, collections
 import requests
+import pandas as pd
 from bs4 import BeautifulSoup
 from rapidfuzz import fuzz, process
 from unidecode import unidecode
@@ -101,34 +102,39 @@ def fetch_transcript(url: str) -> str:
 
 
 # -------------------------------------------------------------------- roster
-DATABANK = ("https://raw.githubusercontent.com/chadwickbureau/"
-            "baseballdatabank/master/core/People.csv")
+REGISTER = ("https://raw.githubusercontent.com/chadwickbureau/"
+            "register/master/data/people-{shard}.csv")
+SHARDS = list("0123456789abcdef")   # register is split across 16 files
 
 def _norm(s: str) -> str:
-    return re.sub(r"[^a-z ]", "", unidecode(s).lower()).strip()
+    return re.sub(r"[^a-z ]", "", unidecode(str(s)).lower()).strip()
 
 def build_roster(active_since: int = 2015):
-    """Candidate set of recent players. Returns:
+    """Candidate set of recent MLB players from the Chadwick register (the same
+    source pybaseball uses). Filtering on mlb_played_last keeps anyone who has
+    reached the majors since `active_since`, including 2025/2026 debuts. Returns:
        full_exact:  {normalized 'first last' -> canonical name}
        last_index:  {normalized last -> [(norm_first, canonical), ...]}
     """
-    r = requests.get(DATABANK, headers=HEADERS, timeout=60)
-    r.raise_for_status()
-    rows = list(csv.DictReader(r.text.splitlines()))
+    frames = []
+    for s in SHARDS:
+        frames.append(pd.read_csv(
+            REGISTER.format(shard=s),
+            usecols=["name_first", "name_last", "mlb_played_last"],
+            dtype=str, low_memory=False))
+    reg = pd.concat(frames, ignore_index=True).dropna(
+        subset=["name_first", "name_last", "mlb_played_last"])
+    reg["yr"] = pd.to_numeric(reg["mlb_played_last"], errors="coerce")
+    reg = reg[reg["yr"] >= active_since]
+
     full_exact, last_index = {}, collections.defaultdict(list)
-    for row in rows:
-        final = row.get("finalGame") or ""
-        try:
-            if int(final[:4]) < active_since:
-                continue
-        except ValueError:
-            continue
-        first, last = row["nameFirst"].strip(), row["nameLast"].strip()
-        if not first or not last:
+    for first, last in zip(reg["name_first"], reg["name_last"]):
+        first, last = str(first).strip(), str(last).strip()
+        nf, nl = _norm(first), _norm(last)
+        if not nf or not nl:
             continue
         canonical = f"{first} {last}"
-        nf, nl = _norm(first), _norm(last)
-        if _norm(canonical) in NON_PLAYERS:
+        if f"{nf} {nl}" in NON_PLAYERS:
             continue
         full_exact[f"{nf} {nl}"] = canonical
         last_index[nl].append((nf, canonical))
