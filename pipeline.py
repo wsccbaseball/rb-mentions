@@ -25,6 +25,8 @@ import argparse, csv, os, re, time, collections
 from urllib.parse import urljoin
 import requests
 import pandas as pd
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 from rapidfuzz import fuzz, process
 from unidecode import unidecode
@@ -37,6 +39,22 @@ HEADERS = {
                    "Chrome/124.0.0.0 Safari/537.36"),
     "Accept-Language": "en-US,en;q=0.9",
 }
+
+# podscripts throttles bursts (HTTP 429). This session backs off and honors the
+# server's Retry-After header instead of hammering.
+def _session() -> requests.Session:
+    s = requests.Session()
+    s.headers.update(HEADERS)
+    retry = Retry(total=5, connect=3, read=3, backoff_factor=2.0,
+                  status_forcelist=(429, 500, 502, 503, 504),
+                  allowed_methods=frozenset(["GET"]),
+                  respect_retry_after_header=True)
+    s.mount("https://", HTTPAdapter(max_retries=retry))
+    return s
+
+SESSION = _session()
+PAGE_DELAY = 1.0        # between index pages
+EPISODE_DELAY = 1.2     # between transcript fetches — polite enough to avoid 429
 
 # Known audio-transcription errors fuzzy matching won't fix on its own.
 # Map the mangled form -> the real player. Grow this as you spot misses.
@@ -61,7 +79,7 @@ def scrape_episode_urls(limit: int | None = None) -> list[str]:
     """Walk the paginated index and collect every episode URL (absolute)."""
     seen, out, page = set(), [], 1
     while True:
-        r = requests.get(f"{INDEX}?page={page}", headers=HEADERS, timeout=30)
+        r = SESSION.get(f"{INDEX}?page={page}", timeout=30)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
         hrefs = [urljoin(BASE, a["href"]) for a in soup.select("h3 a[href]")
@@ -78,7 +96,7 @@ def scrape_episode_urls(limit: int | None = None) -> list[str]:
         if page > 60:
             break
         page += 1
-        time.sleep(0.5)              # be polite
+        time.sleep(PAGE_DELAY)      # be polite
     return out[:limit] if limit else out
 
 
@@ -93,7 +111,7 @@ def fetch_transcript(url: str) -> str:
     <script>/<style> first, because podscripts ships a 'There aren't comments yet'
     string inside an early script that would otherwise truncate the body.
     """
-    r = requests.get(url, headers=HEADERS, timeout=30)
+    r = SESSION.get(url, timeout=30)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
     for tag in soup(["script", "style", "noscript", "nav", "header", "footer"]):
@@ -227,7 +245,7 @@ def count_mentions(urls, full_exact, last_index):
         total.update(c)
         if j % 10 == 0:
             print(f"  ...{j}/{len(urls)} episodes")
-        time.sleep(0.3)
+        time.sleep(EPISODE_DELAY)
     print(f"  {len(total)} distinct players; top 10: "
           + ", ".join(f"{n}({m})" for n, m in total.most_common(10)))
     return total, per_ep
