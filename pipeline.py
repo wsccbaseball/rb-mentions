@@ -22,6 +22,7 @@ Run:      python pipeline.py            # full run
 
 from __future__ import annotations
 import argparse, csv, os, re, time, collections
+from urllib.parse import urljoin
 import requests
 import pandas as pd
 from bs4 import BeautifulSoup
@@ -57,31 +58,27 @@ NON_PLAYERS = {
 
 # ------------------------------------------------------------------ scraping
 def scrape_episode_urls(limit: int | None = None) -> list[str]:
-    """Walk the paginated index and collect every episode URL."""
-    urls, page = [], 1
+    """Walk the paginated index and collect every episode URL (absolute)."""
+    seen, out, page = set(), [], 1
     while True:
         r = requests.get(f"{INDEX}?page={page}", headers=HEADERS, timeout=30)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
-        hrefs = [a["href"] for a in soup.select("h3 a[href]")
+        hrefs = [urljoin(BASE, a["href"]) for a in soup.select("h3 a[href]")
                  if "/podcasts/rates-barrels/" in a["href"]]
         hrefs = [h for h in hrefs if h.rstrip("/") != INDEX]
-        if not hrefs:
+        new = 0
+        for h in hrefs:
+            if h not in seen:
+                seen.add(h); out.append(h); new += 1
+        if new == 0:                 # no fresh links -> past the last page
             break
-        urls.extend(hrefs)
-        if limit and len(urls) >= limit:
-            return urls[:limit]
-        # last page has no "next"; stop when we stop finding new links
-        if not soup.select_one('a[href*="page="]') or page > 60:
+        if limit and len(out) >= limit:
+            return out[:limit]
+        if page > 60:
             break
         page += 1
-        time.sleep(0.5)  # be polite
-    # de-dupe, keep order
-    seen, out = set(), []
-    for u in urls:
-        u = u if u.startswith("http") else BASE + u
-        if u not in seen:
-            seen.add(u); out.append(u)
+        time.sleep(0.5)              # be polite
     return out[:limit] if limit else out
 
 
