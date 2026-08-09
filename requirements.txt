@@ -3,5 +3,4 @@ beautifulsoup4
 rapidfuzz
 unidecode
 pandas
-pybaseball
 supabase
