@@ -290,6 +290,22 @@ def attach_fwar(counts, *_ignored):
     for url in BREF.values():
         for k, v in _bref_war(url).items():
             war[k] += v
+
+    # Baseball-Reference suffixes names ("Luis Robert Jr.", "Michael Harris II")
+    # but the register / mention side usually doesn't. Add a suffix-stripped
+    # alias ONLY when it's unambiguous, so we never merge a Jr with his Sr.
+    suffix = re.compile(r"\s+(jr|sr|ii|iii|iv|v)$")
+    groups = collections.defaultdict(list)
+    for k in list(war):
+        groups[suffix.sub("", k)].append(k)
+    for stripped, keys in groups.items():
+        if stripped not in war and len(keys) == 1:
+            war[stripped] = war[keys[0]]
+    # explicit father/son collisions where stripping is ambiguous
+    for mention_norm, bref_norm in {"fernando tatis": "fernando tatis jr"}.items():
+        if bref_norm in war:
+            war[mention_norm] = war[bref_norm]
+
     out = []
     for name, m in counts.most_common():
         val = war.get(_norm(name))
