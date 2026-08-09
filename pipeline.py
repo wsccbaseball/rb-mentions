@@ -6,7 +6,7 @@ Flow:
   2. fetch_transcript(url)  -> clean transcript text
   3. build_roster()         -> {normalized name -> canonical name}, surname index
   4. count_mentions(...)    -> per-player mention counts across all episodes
-  5. attach_fwar(...)       -> join career fWAR from FanGraphs (pybaseball)
+  5. attach_fwar(...)       -> join career fWAR from the FanGraphs JSON API
   6. export / upsert        -> CSV + Supabase
 
 Designed to run in an environment with open network (a GitHub Actions runner),
@@ -259,20 +259,49 @@ def count_mentions(urls, full_exact, last_index):
 
 
 # ---------------------------------------------------------------------- fWAR
+FG_API = "https://www.fangraphs.com/api/leaders/major-league/data"
+
+def _fg_war(stats: str, start: int, end: int) -> dict:
+    """Pull career-over-span WAR for one stat group ('bat' or 'pit') from the
+    current FanGraphs JSON API (the old pybaseball endpoint 403s now)."""
+    params = {
+        "pos": "all", "stats": stats, "lg": "all", "qual": "0",
+        "season": end, "season1": start, "ind": "0",
+        "pageitems": "200000", "pagenum": "1", "type": "8",
+        "month": "0", "team": "0", "rost": "0",
+        "sortstat": "WAR", "sortdir": "default",
+    }
+    r = SESSION.get(FG_API, params=params,
+                    headers={"Accept": "application/json"}, timeout=90)
+    r.raise_for_status()
+    payload = r.json()
+    rows = payload.get("data", payload) if isinstance(payload, dict) else payload
+    out, saw_war = {}, False
+    for row in rows:
+        name = row.get("PlayerName") or row.get("Name") or ""
+        name = re.sub(r"<[^>]+>", "", str(name)).strip()   # strip any HTML anchor
+        war = row.get("WAR")
+        if war is None:
+            continue
+        saw_war = True
+        if name:
+            out[_norm(name)] = out.get(_norm(name), 0.0) + float(war)
+    if not saw_war:
+        raise ValueError(f"FanGraphs {stats} response had no WAR field")
+    return out
+
 def attach_fwar(counts, start=2015, end=2025):
-    """Career-over-span fWAR from FanGraphs. Two-way players get bat+pitch summed.
-    Requires pybaseball (hits fangraphs.com at runtime)."""
-    from pybaseball import batting_stats, pitching_stats
-    bat = batting_stats(start, end, qual=0, ind=0)[["Name", "WAR"]]
-    pit = pitching_stats(start, end, qual=0, ind=0)[["Name", "WAR"]]
+    """Career-over-span fWAR from the FanGraphs API. Two-way players get their
+    batting and pitching WAR summed."""
     war = collections.defaultdict(float)
-    for df in (bat, pit):
-        for _, row in df.iterrows():
-            war[_norm(row["Name"])] += float(row["WAR"] or 0)
+    for stats in ("bat", "pit"):
+        for k, v in _fg_war(stats, start, end).items():
+            war[k] += v
     out = []
     for name, m in counts.most_common():
+        val = war.get(_norm(name))
         out.append({"player": name, "mentions": m,
-                    "career_fwar": round(war.get(_norm(name), float("nan")), 1)})
+                    "career_fwar": round(val, 1) if val is not None else None})
     return out
 
 
@@ -311,9 +340,16 @@ def main():
     print("counting mentions...")
     counts, _ = count_mentions(urls, full_exact, last_index)
 
-    rows = ([{"player": n, "mentions": m, "career_fwar": None}
-             for n, m in counts.most_common()]
-            if args.no_fwar else attach_fwar(counts))
+    if args.no_fwar:
+        rows = [{"player": n, "mentions": m, "career_fwar": None}
+                for n, m in counts.most_common()]
+    else:
+        try:
+            rows = attach_fwar(counts)
+        except Exception as e:
+            print(f"  ! fWAR join failed ({e}); saving mentions without fWAR")
+            rows = [{"player": n, "mentions": m, "career_fwar": None}
+                    for n, m in counts.most_common()]
 
     write_csv(rows)
     upsert_supabase(rows)
