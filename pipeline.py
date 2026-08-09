@@ -21,7 +21,7 @@ Run:      python pipeline.py            # full run
 """
 
 from __future__ import annotations
-import argparse, csv, os, re, time, collections
+import argparse, csv, io, os, re, time, collections
 from urllib.parse import urljoin
 import requests
 import pandas as pd
@@ -259,43 +259,32 @@ def count_mentions(urls, full_exact, last_index):
 
 
 # ---------------------------------------------------------------------- fWAR
-FG_API = "https://www.fangraphs.com/api/leaders/major-league/data"
+# FanGraphs blocks the Actions runner IP (403), so career WAR comes from
+# Baseball-Reference's public bulk files instead. This is bWAR, not fWAR, but the
+# two track closely; the column stays named career_fwar for schema compatibility.
+BREF = {
+    "bat": "https://www.baseball-reference.com/data/war_daily_bat.txt",
+    "pit": "https://www.baseball-reference.com/data/war_daily_pitch.txt",
+}
 
-def _fg_war(stats: str, start: int, end: int) -> dict:
-    """Pull career-over-span WAR for one stat group ('bat' or 'pit') from the
-    current FanGraphs JSON API (the old pybaseball endpoint 403s now)."""
-    params = {
-        "pos": "all", "stats": stats, "lg": "all", "qual": "0",
-        "season": end, "season1": start, "ind": "0",
-        "pageitems": "200000", "pagenum": "1", "type": "8",
-        "month": "0", "team": "0", "rost": "0",
-        "sortstat": "WAR", "sortdir": "default",
-    }
-    r = SESSION.get(FG_API, params=params,
-                    headers={"Accept": "application/json"}, timeout=90)
+def _bref_war(url: str) -> dict:
+    r = SESSION.get(url, timeout=120)
     r.raise_for_status()
-    payload = r.json()
-    rows = payload.get("data", payload) if isinstance(payload, dict) else payload
-    out, saw_war = {}, False
-    for row in rows:
-        name = row.get("PlayerName") or row.get("Name") or ""
-        name = re.sub(r"<[^>]+>", "", str(name)).strip()   # strip any HTML anchor
-        war = row.get("WAR")
-        if war is None:
-            continue
-        saw_war = True
-        if name:
-            out[_norm(name)] = out.get(_norm(name), 0.0) + float(war)
-    if not saw_war:
-        raise ValueError(f"FanGraphs {stats} response had no WAR field")
+    df = pd.read_csv(io.StringIO(r.text), low_memory=False)
+    if "WAR" not in df.columns or "name_common" not in df.columns:
+        raise ValueError(f"unexpected columns from {url}: {list(df.columns)[:6]}")
+    df["WAR"] = pd.to_numeric(df["WAR"], errors="coerce").fillna(0.0)
+    out = collections.defaultdict(float)
+    for name, w in zip(df["name_common"], df["WAR"]):   # career = sum all seasons
+        out[_norm(name)] += float(w)
     return out
 
-def attach_fwar(counts, start=2015, end=2025):
-    """Career-over-span fWAR from the FanGraphs API. Two-way players get their
-    batting and pitching WAR summed."""
+def attach_fwar(counts, *_ignored):
+    """Career WAR per player from Baseball-Reference (bat + pitch summed, so
+    two-way players are handled). Joined to mention counts by normalized name."""
     war = collections.defaultdict(float)
-    for stats in ("bat", "pit"):
-        for k, v in _fg_war(stats, start, end).items():
+    for url in BREF.values():
+        for k, v in _bref_war(url).items():
             war[k] += v
     out = []
     for name, m in counts.most_common():
@@ -312,22 +301,58 @@ def write_csv(rows, path="mentions_vs_fwar.csv"):
         w.writeheader(); w.writerows(rows)
     print(f"wrote {path} ({len(rows)} players)")
 
-def upsert_supabase(rows):
+def _supabase():
     url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY")
     if not (url and key):
+        return None
+    from supabase import create_client
+    return create_client(url, key)
+
+def upsert_supabase(rows):
+    sb = _supabase()
+    if sb is None:
         print("SUPABASE_URL / SUPABASE_SERVICE_KEY not set — skipping upsert")
         return
-    from supabase import create_client
-    sb = create_client(url, key)
     sb.table("rb_player_mentions").upsert(rows, on_conflict="player").execute()
     print(f"upserted {len(rows)} rows to Supabase")
+
+def load_counts_from_supabase():
+    """Read the existing player/mention rows back out, paging past the 1000-row
+    PostgREST cap, so we can recompute WAR without re-scraping."""
+    sb = _supabase()
+    if sb is None:
+        raise RuntimeError("SUPABASE creds not set; --fwar-only needs them")
+    counts, page = collections.Counter(), 0
+    while True:
+        res = sb.table("rb_player_mentions").select("player,mentions") \
+                .range(page * 1000, page * 1000 + 999).execute()
+        for row in res.data:
+            counts[row["player"]] = row["mentions"]
+        if len(res.data) < 1000:
+            break
+        page += 1
+    return counts
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=None, help="cap episodes (smoke test)")
-    ap.add_argument("--no-fwar", action="store_true", help="skip FanGraphs join")
+    ap.add_argument("--no-fwar", action="store_true", help="skip the WAR join")
+    ap.add_argument("--fwar-only", action="store_true",
+                    help="skip scraping; recompute WAR for players already in Supabase")
     args = ap.parse_args()
+
+    if args.fwar_only:
+        print("loading players from Supabase...")
+        counts = load_counts_from_supabase()
+        print(f"  {len(counts)} players")
+        print("joining WAR...")
+        rows = attach_fwar(counts)
+        matched = sum(1 for r in rows if r["career_fwar"] is not None)
+        print(f"  WAR matched {matched}/{len(rows)} players")
+        write_csv(rows)
+        upsert_supabase(rows)
+        return
 
     print("scraping episode list...")
     urls = scrape_episode_urls(limit=args.limit)
