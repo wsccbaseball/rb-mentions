@@ -270,7 +270,11 @@ BREF = {
 def _bref_war(url: str) -> dict:
     r = SESSION.get(url, timeout=120)
     r.raise_for_status()
-    df = pd.read_csv(io.StringIO(r.text), low_memory=False)
+    # requests defaults to latin-1 for text/plain, which mojibakes accented
+    # names (Tatís, Ramírez, Acuña) and drops them from the join. Decode the
+    # raw bytes as UTF-8 instead.
+    df = pd.read_csv(io.BytesIO(r.content), encoding="utf-8",
+                     encoding_errors="replace", low_memory=False)
     if "WAR" not in df.columns or "name_common" not in df.columns:
         raise ValueError(f"unexpected columns from {url}: {list(df.columns)[:6]}")
     df["WAR"] = pd.to_numeric(df["WAR"], errors="coerce").fillna(0.0)
