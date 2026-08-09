@@ -71,7 +71,13 @@ NON_PLAYERS = {
     "david obrien", "zach meisel", "derek vanriper", "eno sarris",
     "buster posey", "farhan zaidi", "bob melvin", "alex anthopoulos",
     "dave roberts", "aj preller", "peter bendix", "mark kotsay",
+    "craig breslow",
 }
+
+# Surnames that are also common English words, months, or verbs and survive the
+# capitalization filter below. Count these ONLY via full-name matches, never as
+# a bare surname (kills "in May" -> Trevor May).
+SURNAME_STOP = {"may"}
 
 
 # ------------------------------------------------------------------ scraping
@@ -181,20 +187,24 @@ def match_episode(text: str, full_exact, last_index, fuzz_cut=87):
     """Count player mentions in one transcript.
 
     Pass 1: full-name bigrams (exact, then fuzzy on the first name for a known
-            surname) -> establishes which players are 'present' this episode.
-    Pass 2: bare surnames, counted only when that surname maps to exactly one
-            present player (episode-scoped disambiguation).
+            surname) -> establishes which players are 'present' this episode and
+            marks the tokens they consumed.
+    Pass 2: bare surnames, counted only when (a) that surname maps to exactly one
+            present player, (b) the token is Capitalized in the source (so 'young'
+            the adjective doesn't become Brandon Young), (c) the surname isn't a
+            month/verb collision, and (d) the token was not already consumed by a
+            full-name hit (so 'Taylor' in 'Taylor Ward' doesn't feed Grant Taylor).
     """
-    tokens = [unidecode(w).lower().strip(".'-") for w in WORD.findall(text)]
+    raw = WORD.findall(text)                       # case preserved
+    tokens = [unidecode(w).lower().strip(".'-") for w in raw]
     counts = collections.Counter()
-    present = {}                      # norm_last -> canonical (this episode)
+    present, consumed = {}, set()
 
     # aliases first (mangled full names)
     joined = " ".join(tokens)
     for bad, good in ALIASES.items():
         if good and bad in joined:
-            hits = joined.count(bad)
-            counts[good] += hits
+            counts[good] += joined.count(bad)
             present[_norm(good.split()[-1])] = good
 
     # pass 1: full-name bigrams
@@ -215,18 +225,15 @@ def match_episode(text: str, full_exact, last_index, fuzz_cut=87):
         if canon and _norm(canon) not in NON_PLAYERS:
             counts[canon] += 1
             present[_norm(canon.split()[-1])] = canon
+            consumed.add(i); consumed.add(i + 1)
 
-    # pass 2: bare surnames for present players (skip surnames already counted
-    # as part of a full-name hit on the same token run — approximate, good enough)
-    present_last_unique = collections.Counter(
-        _norm(c.split()[-1]) for c in present.values())
+    # pass 2: bare surnames for present players
+    unique = collections.Counter(_norm(c.split()[-1]) for c in present.values())
     for i, tok in enumerate(tokens):
-        if tok in present and present_last_unique[tok] == 1:
-            # avoid double-count when preceded by the matching first name
-            prev = tokens[i - 1] if i else ""
-            canon = present[tok]
-            if _norm(canon.split()[0]) != prev:
-                counts[canon] += 1
+        if i in consumed or tok in SURNAME_STOP:
+            continue
+        if tok in present and unique[tok] == 1 and raw[i][:1].isupper():
+            counts[present[tok]] += 1
     return counts
 
 
