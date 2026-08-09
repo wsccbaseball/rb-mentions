@@ -1,0 +1,34 @@
+name: refresh-rb-mentions
+on:
+  schedule:
+    - cron: '0 11 * * 1'          # Mondays 11:00 UTC — after the weekend shows
+  workflow_dispatch:               # the "Run workflow" button (works from mobile web)
+    inputs:
+      limit:
+        description: 'Episodes to process (blank = all ~749)'
+        required: false
+        default: ''
+      no_fwar:
+        description: 'Skip the FanGraphs join (faster test run)'
+        type: boolean
+        default: false
+jobs:
+  run:
+    runs-on: ubuntu-latest          # open network: reaches podscripts + fangraphs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt
+      - name: Run pipeline
+        run: |
+          ARGS=""
+          if [ -n "${{ inputs.limit }}" ]; then ARGS="$ARGS --limit ${{ inputs.limit }}"; fi
+          if [ "${{ inputs.no_fwar }}" = "true" ]; then ARGS="$ARGS --no-fwar"; fi
+          echo "running: python pipeline.py $ARGS"
+          python pipeline.py $ARGS
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      - uses: actions/upload-artifact@v4
+        with: { name: mentions-csv, path: mentions_vs_fwar.csv }
