@@ -400,7 +400,10 @@ def main():
                     for n, m in counts.most_common()]
 
     write_csv(rows)
-    upsert_supabase(rows)
+    if args.limit:
+        print("test run (--limit): skipping Supabase upsert to protect the live table")
+    else:
+        upsert_supabase(rows)
 
 
 if __name__ == "__main__":
