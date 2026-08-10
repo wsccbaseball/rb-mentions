@@ -186,39 +186,32 @@ def build_roster(active_since: int = 2015):
 # ------------------------------------------------------------------ matching
 WORD = re.compile(r"[A-Za-z][A-Za-z.'-]+")
 
-def match_episode(text: str, full_exact, last_index, fuzz_cut=87):
-    """Count player mentions in one transcript.
-
-    Pass 1: full-name bigrams (exact, then fuzzy on the first name for a known
-            surname) -> establishes which players are 'present' this episode and
-            marks the tokens they consumed.
-    Pass 2: bare surnames, counted only when (a) that surname maps to exactly one
-            present player, (b) the token is Capitalized in the source (so 'young'
-            the adjective doesn't become Brandon Young), (c) the surname isn't a
-            month/verb collision, and (d) the token was not already consumed by a
-            full-name hit (so 'Taylor' in 'Taylor Ward' doesn't feed Grant Taylor).
+def scan_episode(text: str, full_exact, last_index, fuzz_cut=87):
+    """Scan one transcript. Returns:
+      fc      : Counter of full-name (and alias) mention counts
+      present : {surname_norm -> canonical} full-named in THIS episode
+      bares   : Counter of {surname_norm -> capitalized bare-surname occurrences}
+                that were NOT consumed by a full-name hit (resolved globally later)
     """
     raw = WORD.findall(text)                       # case preserved
     tokens = [unidecode(w).lower().strip(".'-") for w in raw]
-    counts = collections.Counter()
+    fc = collections.Counter()
     present, consumed = {}, set()
 
-    # aliases first (mangled full names)
     joined = " ".join(tokens)
     for bad, good in ALIASES.items():
         if good and bad in joined:
-            counts[good] += joined.count(bad)
+            fc[good] += joined.count(bad)
             present[_norm(good.split()[-1])] = good
 
-    # pass 1: full-name bigrams
     for i in range(len(tokens) - 1):
         first, last = tokens[i], tokens[i + 1]
         key = f"{first} {last}"
         if key in NON_PLAYERS:
             continue
-        if key in full_exact:                       # exact
+        if key in full_exact:
             canon = full_exact[key]
-        elif last in last_index:                    # fuzzy on first name
+        elif last in last_index:
             cand = process.extractOne(
                 first, [f for f, _ in last_index[last]],
                 scorer=fuzz.ratio, score_cutoff=fuzz_cut)
@@ -226,23 +219,23 @@ def match_episode(text: str, full_exact, last_index, fuzz_cut=87):
         else:
             canon = None
         if canon and _norm(canon) not in NON_PLAYERS:
-            counts[canon] += 1
+            fc[canon] += 1
             present[_norm(canon.split()[-1])] = canon
             consumed.add(i); consumed.add(i + 1)
 
-    # pass 2: bare surnames for present players
-    unique = collections.Counter(_norm(c.split()[-1]) for c in present.values())
+    bares = collections.Counter()
     for i, tok in enumerate(tokens):
         if i in consumed or tok in SURNAME_STOP:
             continue
-        if tok in present and unique[tok] == 1 and raw[i][:1].isupper():
-            counts[present[tok]] += 1
-    return counts
+        if tok in last_index and raw[i][:1].isupper():   # a roster surname, capitalized
+            bares[tok] += 1
+    return fc, present, bares
 
 
 def count_mentions(urls, full_exact, last_index):
     total = collections.Counter()
-    per_ep = {}
+    global_present = collections.defaultdict(set)   # surname_norm -> {canonicals}
+    ep_bares = []                                    # per-episode bare candidates
     for j, url in enumerate(urls, 1):
         try:
             txt = fetch_transcript(url)
@@ -250,15 +243,27 @@ def count_mentions(urls, full_exact, last_index):
             print(f"  ! skip {url}: {e}"); continue
         if len(txt) < 500:
             print(f"  ! short transcript ({len(txt)} chars), check parsing: {url}")
-        c = match_episode(txt, full_exact, last_index)
-        per_ep[url] = c
-        total.update(c)
+        fc, present, bares = scan_episode(txt, full_exact, last_index)
+        total.update(fc)
+        for s, canon in present.items():
+            global_present[s].add(canon)
+        ep_bares.append(bares)
         if j % 10 == 0:
             print(f"  ...{j}/{len(urls)} episodes")
         time.sleep(EPISODE_DELAY)
+
+    # a bare surname counts only if exactly one full-named player owns it across
+    # the whole archive (unambiguous). Fixes last-name-only stars (Ohtani, Wheeler)
+    # while leaving ambiguous surnames (Turner, Valdez, Garcia) uncounted.
+    solo = {s: next(iter(c)) for s, c in global_present.items() if len(c) == 1}
+    for bares in ep_bares:
+        for s, n in bares.items():
+            if s in solo:
+                total[solo[s]] += n
+
     print(f"  {len(total)} distinct players; top 10: "
           + ", ".join(f"{n}({m})" for n, m in total.most_common(10)))
-    return total, per_ep
+    return total, None
 
 
 # ---------------------------------------------------------------------- fWAR
