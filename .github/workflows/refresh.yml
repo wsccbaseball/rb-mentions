@@ -18,7 +18,9 @@ on:
         default: false
 jobs:
   run:
-    runs-on: ubuntu-latest          # open network: reaches podscripts + fangraphs
+    runs-on: ubuntu-latest   # open network: reaches podscripts + baseball-reference
+    permissions:
+      contents: write        # lets the workflow commit the rebuilt index.html
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -38,3 +40,18 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       - uses: actions/upload-artifact@v4
         with: { name: mentions-csv, path: mentions_vs_fwar.csv }
+
+      # Rebuild the public chart from the fresh table and commit it, so the
+      # GitHub Pages site self-updates. Skipped on --limit test runs.
+      - name: Rebuild & commit chart
+        if: ${{ inputs.limit == '' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          python build_chart.py
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git diff --staged --quiet || git commit -m "chart: automated data refresh"
+          git push
