@@ -62,6 +62,7 @@ ALIASES = {
     "josh young": "Josh Jung",          # hosts say "Young" for "Jung"
     "keston hura": "Keston Hiura",       # transcription drops the 'i' in Hiura
     "keston hira": "Keston Hiura",
+    "corbin burns": "Corbin Burnes",   # "Burns" alone is ambiguous with Chase Burns
     "eno saris": None, "van ryper": None, "inosaris": None,  # hosts, not players
     "niv shah": None, "brian smith": None,
 }
@@ -93,10 +94,11 @@ SURNAME_SOLO = {
     "semien": "Marcus Semien",
     "adames": "Willy Adames",
     "skubal": "Tarik Skubal", "scoobal": "Tarik Skubal",
-    "skenes": "Paul Skenes",
+    "skenes": "Paul Skenes", "skeens": "Paul Skenes", "skeans": "Paul Skenes",
     "burnes": "Corbin Burnes",
     "gallen": "Zac Gallen",
     "misiorowski": "Jacob Misiorowski", "mizorowski": "Jacob Misiorowski",
+    "mizaraski": "Jacob Misiorowski",
 }
 
 
